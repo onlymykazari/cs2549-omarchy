@@ -64,6 +64,22 @@ sudo sh port-arch.sh pam             # sudo/polkit/锁屏 接入指纹（omarchy
 
 另外，omarchy 首启的指纹检测（`omarchy-hw-fingerprint`）在这台机器上会漏检：VID `2541` 不在其白名单，且该传感器产品字符串是厂商拼写错误的 "USB Fing**P**intComp"（少了 r），匹配不上 "fingerprint" 子串——所以本仓库的手动移植才有必要。
 
+### 识别率调参（本仓库默认已应用）
+
+这个 112×88 小传感器的图像经常提取不出足够特征点（fprintd 日志报
+`No enough keypoints found`，触发 retry 风暴甚至 fprintd 过热禁用 10-30 分钟）。
+本仓库的构建脚本把两个阈值放宽了：
+
+| 位置 | 默认 | 调整后 | 含义 |
+|---|---|---|---|
+| `fp-image.c` | < 25 关键点判废 | < 12 | 单次采集至少提取多少特征点 |
+| `sigfm.cpp` | `min_match = 5` | `3` | 判定匹配所需的关键点对数 |
+
+代价是误识率（FAR）上升——这是实验级驱动的便利性取舍，请自行评估。
+录指纹技巧：用拇指、平放压实停 1 秒、完全抬离再按；同一手指可多次
+`fprintd-enroll` 增加模板数量。fprintd 报 "Device disabled to prevent
+overheating" 时，`sudo systemctl restart fprintd` 立即恢复（不要连续快扫）。
+
 ## 已验证环境
 
 | 组件 | 版本 |

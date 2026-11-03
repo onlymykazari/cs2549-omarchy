@@ -62,6 +62,13 @@ build)
         sed -i "s/opencv = dependency('opencv4', required: true)/opencv = dependency(['opencv4', 'opencv5'], required: true)/" upstream/libfprint/sigfm/meson.build
         echo "[build] opencv dependency widened to opencv4/opencv5"
     fi
+    # This 112x88 sensor yields few SIFT keypoints; loosen SIGFM acceptance
+    # (25 -> 12 keypoints per capture, 5 -> 3 matching pairs) so marginal
+    # captures count and matches succeed more often. Trade-off: lower security
+    # margin (higher false-accept chance) on an experimental driver.
+    sed -i 's/sigfm_keypoints_count (data->sigfm_info) < 25/sigfm_keypoints_count (data->sigfm_info) < 12/' upstream/libfprint/fp-image.c
+    sed -i 's/constexpr auto min_match = 5;/constexpr auto min_match = 3;/' upstream/libfprint/sigfm/sigfm.cpp
+    echo "[build] SIGFM thresholds loosened (12 keypoints / 3 matching pairs)"
     sh build-driver.sh sigfm
     meson install -C build-sigfm --destdir "$PWD/staging" --no-rebuild
     find staging -name 'libfprint-2.so*'
