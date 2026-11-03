@@ -49,22 +49,20 @@ sudo sh port-arch.sh deps             # 安装构建依赖（base-devel/meson/op
 sh port-arch.sh build                 # 编译 cs2549 驱动 + SIGFM 匹配器，并跑单元测试
 sudo sh port-arch.sh install          # 安装到 /opt/libfprint-cs2549 + fprintd systemd 覆盖
 
-fprintd-enroll -f right-index-finger  # 本地终端里录指纹（按一下抬一下，quality retry 属正常）
+fprintd-enroll -f right-thumb         # 本地终端里录指纹（拇指成功率最高；平放压实停 1 秒再抬起）
 fprintd-verify -f right-index-finger  # 期望输出 verify-match
 
-sudo sh port-arch.sh pam all          # 锁屏 + sudo 接入指纹（all）；仅锁屏用 pam lock
+sudo sh port-arch.sh pam             # sudo/polkit/锁屏 接入指纹（omarchy 官方布局）
 ```
 
-`pam all` 会在 `/etc/pam.d/system-auth`（sudo/su/login）和
-`/etc/pam.d/omarchy-lock-password`（Omarchy 锁屏）中、`pam_faillock.so preauth`
-之后插入：
+`pam` 按 **Omarchy 官方布局**（与 `omarchy-setup-security-fingerprint` 一致）配置三处：
 
-```
-auth       sufficient                  pam_fprintd.so max-tries=3 timeout=10
-```
+- `/etc/pam.d/sudo`、`/etc/pam.d/polkit-1`：合盖门槛行 + `auth sufficient pam_fprintd.so`（开盖时指纹优先，合盖自动跳过回退密码）；
+- `/etc/pam.d/omarchy-lock-fingerprint`：锁屏检测到这个文件 + fprintd 里有已录指纹时，会**自动启用原生指纹 UI**（触摸随时解锁，密码框不受影响）。
 
-指纹先试，10 秒内无指纹或失败自动回退密码。原始文件备份为 `*.pam.bak`。
-其他发行版/DE 请把 `omarchy-lock-password` 换成你自己的锁屏 PAM 服务（如 `kde`、`hyprlock`、`swaylock`）。
+注意：**不要**把 `pam_fprintd` 塞进 `omarchy-lock-password` / `system-auth` 这类密码栈——串行 PAM 流程会让每次输密码都先阻塞等待指纹超时。
+
+另外，omarchy 首启的指纹检测（`omarchy-hw-fingerprint`）在这台机器上会漏检：VID `2541` 不在其白名单，且该传感器产品字符串是厂商拼写错误的 "USB Fing**P**intComp"（少了 r），匹配不上 "fingerprint" 子串——所以本仓库的手动移植才有必要。
 
 ## 已验证环境
 

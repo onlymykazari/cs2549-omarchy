@@ -2,7 +2,7 @@
 # Port of subhashdasyam/KiKAID-A3-linux (cs2549 libfprint driver, USB 2541:2549)
 # to Omarchy / Arch Linux, with optional PAM integration for lock screen and sudo.
 #
-# Usage: sh port-arch.sh fetch|deps|build|install|enroll|pam [all|lock]|status|rollback
+# Usage: sh port-arch.sh fetch|deps|build|install|enroll|pam|status|rollback
 #
 # Tested on: Omarchy 4.0.6 (Arch Linux), kernel 7.2.8-9-omarchy, fprintd 1.94.5,
 #            OpenCV 5.0.0, glib2 2.90.1, 2026-11.
@@ -86,28 +86,39 @@ enroll)
     ;;
 
 pam)
-    [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo sh port-arch.sh pam all|lock" >&2; exit 1; }
-    line="auth       sufficient                  pam_fprintd.so max-tries=3 timeout=10"
-    add_pam() {
-        f=$1
-        cp -n "$f" "$f.pam.bak" 2>/dev/null || true
-        if grep -q pam_fprintd "$f"; then
-            echo "[pam] $f already has pam_fprintd"
-        else
-            # Insert after the faillock preauth line: fingerprint is tried first,
-            # password stays as the fallback (sufficient).
-            sed -i "/pam_faillock.so preauth/a\\
-$line" "$f"
-            echo "[pam] added pam_fprintd to $f (backup: $f.pam.bak)"
-        fi
-    }
-    add_pam /etc/pam.d/omarchy-lock-password
-    if [ "${2:-all}" = "all" ]; then
-        add_pam /etc/pam.d/system-auth
-        echo "[pam] sudo/su/login now try fingerprint first (falls back to password)"
-        echo "[pam] note: over SSH, sudo waits timeout=10s for the (local) fingerprint first"
+    [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo sh port-arch.sh pam" >&2; exit 1; }
+    # Omarchy canonical layout (mirrors omarchy-setup-security-fingerprint):
+    # sudo/polkit get "lid gate + fingerprint first"; the lock screen detects
+    # /etc/pam.d/omarchy-lock-fingerprint and enables its native fingerprint UI.
+    # Do NOT add pam_fprintd to the password stacks (omarchy-lock-password /
+    # system-auth): the serial PAM flow would block password checks on the
+    # fingerprint timeout.
+    if ! grep -q pam_fprintd.so /etc/pam.d/sudo; then
+        sed -i '1i auth      sufficient pam_fprintd.so' /etc/pam.d/sudo
     fi
-    echo "[pam] done"
+    if ! grep -q 'omarchy-hw-laptop-closed' /etc/pam.d/sudo; then
+        # Insert immediately before pam_fprintd so success=1 skips exactly it.
+        sed -i '/pam_fprintd\.so/i auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed' /etc/pam.d/sudo
+    fi
+    echo "[pam] /etc/pam.d/sudo configured"
+    if [ ! -f /etc/pam.d/polkit-1 ]; then
+        tee /etc/pam.d/polkit-1 >/dev/null <<'EOF'
+auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
+auth      sufficient pam_fprintd.so
+auth      required pam_unix.so
+
+account   required pam_unix.so
+password  required pam_unix.so
+session   required pam_unix.so
+EOF
+        echo "[pam] /etc/pam.d/polkit-1 created"
+    fi
+    tee /etc/pam.d/omarchy-lock-fingerprint >/dev/null <<'EOF'
+#%PAM-1.0
+auth       required                    pam_fprintd.so
+account    include                     system-local-login
+EOF
+    echo "[pam] /etc/pam.d/omarchy-lock-fingerprint created (lock screen fingerprint UI enabled)"
     ;;
 
 status)
@@ -121,6 +132,8 @@ rollback)
     rm -rf /opt/libfprint-cs2549 /etc/systemd/system/fprintd.service.d/50-cs2549.conf
     systemctl daemon-reload
     systemctl restart fprintd || true
+    sed -i '/pam_fprintd\.so/d; /omarchy-hw-laptop-closed/d' /etc/pam.d/sudo
+    rm -f /etc/pam.d/polkit-1 /etc/pam.d/omarchy-lock-fingerprint
     for f in /etc/pam.d/omarchy-lock-password /etc/pam.d/system-auth; do
         [ -f "$f.pam.bak" ] && cp "$f.pam.bak" "$f" && echo "[rollback] restored $f"
     done
@@ -128,7 +141,7 @@ rollback)
     ;;
 
 *)
-    echo "Usage: $0 fetch|deps|build|install|enroll|pam [all|lock]|status|rollback" >&2
+    echo "Usage: $0 fetch|deps|build|install|enroll|pam|status|rollback" >&2
     exit 2
     ;;
 esac
